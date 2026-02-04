@@ -4,7 +4,7 @@
   "description": "Works Glow - Professional Car Paint Workshop",
   "main": "server/index.js",
   "scripts": {
-   "start": "node index.js",
+    "start": "node index.js",
     "dev": "node server/index.js",
     "create-admin": "node scripts/create-admin.js",
     "test": "echo \"Error: no test specified\" && exit 1"

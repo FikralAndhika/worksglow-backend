@@ -21,16 +21,32 @@ const aboutRoutes = require('./routes/aboutRoutes');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ CORS - Izinkan frontend akses backend
-app.use(cors({
+// ✅ CORS Configuration - Support Development & Production
+const corsOptions = {
   origin: [
-    'http://localhost:5500', 
-    'http://localhost:5501', 
-    'http://127.0.0.1:5500', 
-    'http://127.0.0.1:5501'
+    // Local Development
+    'http://localhost:5500',
+    'http://localhost:5501',
+    'http://localhost:3000',
+    'http://localhost:5173',  // Vite default
+    'http://127.0.0.1:5500',
+    'http://127.0.0.1:5501',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    
+    // Production Frontend (Vercel)
+    'https://worksglows.vercel.app',
+    
+    // Add more production domains if needed
+    // 'https://www.worksglow.com',
   ],
-  credentials: true
-}));
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
 
 // Middleware
 app.use(express.json());
@@ -118,5 +134,6 @@ app.listen(PORT, () => {
   console.log('   - GET  /api/about');
   console.log('='.repeat(50));
   console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 CORS Enabled for ${corsOptions.origin.length} origins`);
   console.log('='.repeat(50));
 });
