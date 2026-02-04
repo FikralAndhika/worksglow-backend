@@ -55,6 +55,24 @@ app.use(express.urlencoded({ extended: true }));
 // ✅ HANYA serve folder uploads untuk gambar/file
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
+// Root Route - Health Check for Vercel
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Works Glow API Server',
+    status: 'success',
+    version: '1.0.0',
+    endpoints: {
+      test: '/api/test',
+      auth: '/api/auth/*',
+      services: '/api/services',
+      hero: '/api/hero',
+      contact: '/api/contact',
+      gallery: '/api/gallery',
+      about: '/api/about'
+    }
+  });
+});
+
 // Test Route
 app.get('/api/test', (req, res) => {
   res.json({ 
