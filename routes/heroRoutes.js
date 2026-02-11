@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { authenticateToken } = require('../middleware/auth'); // ✅ DIPERBAIKI DI SINI
+const { authenticateToken } = require('../middleware/auth');
 const { query } = require('../config/db');
 
 // Configure multer for image uploads
@@ -64,7 +64,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST - Update hero section (with authentication)
-router.post('/update', authenticateToken, upload.fields([ // ✅ DIPERBAIKI DI SINI
+router.post('/update', authenticateToken, upload.fields([
     { name: 'hero1Image', maxCount: 1 },
     { name: 'hero2Image', maxCount: 1 },
     { name: 'hero3Image', maxCount: 1 }
@@ -79,7 +79,8 @@ router.post('/update', authenticateToken, upload.fields([ // ✅ DIPERBAIKI DI S
         // Update Slide 1
         let hero1ImageUrl = null;
         if (req.files && req.files['hero1Image']) {
-            hero1ImageUrl = `/uploads/hero/${req.files['hero1Image'][0].filename}`;
+            // ✅ FIX: Tanpa leading slash, path relatif
+            hero1ImageUrl = `uploads/hero/${req.files['hero1Image'][0].filename}`;
         }
 
         await query(
@@ -94,7 +95,8 @@ router.post('/update', authenticateToken, upload.fields([ // ✅ DIPERBAIKI DI S
         // Update Slide 2
         let hero2ImageUrl = null;
         if (req.files && req.files['hero2Image']) {
-            hero2ImageUrl = `/uploads/hero/${req.files['hero2Image'][0].filename}`;
+            // ✅ FIX: Tanpa leading slash, path relatif
+            hero2ImageUrl = `uploads/hero/${req.files['hero2Image'][0].filename}`;
         }
 
         await query(
@@ -109,7 +111,8 @@ router.post('/update', authenticateToken, upload.fields([ // ✅ DIPERBAIKI DI S
         // Update Slide 3
         let hero3ImageUrl = null;
         if (req.files && req.files['hero3Image']) {
-            hero3ImageUrl = `/uploads/hero/${req.files['hero3Image'][0].filename}`;
+            // ✅ FIX: Tanpa leading slash, path relatif
+            hero3ImageUrl = `uploads/hero/${req.files['hero3Image'][0].filename}`;
         }
 
         await query(

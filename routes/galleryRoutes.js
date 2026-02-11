@@ -9,9 +9,12 @@ const fs = require('fs').promises;
 // HELPER: Get full URL for images
 // ============================================
 function getFullImageUrl(req, relativePath) {
+    // Remove leading slash if exists for consistency
+    const cleanPath = relativePath.startsWith('/') ? relativePath.substring(1) : relativePath;
+    
     // Get base URL from request or use environment variable
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    return `${baseUrl}${relativePath}`;
+    return `${baseUrl}/${cleanPath}`;
 }
 
 // ============================================
@@ -127,7 +130,8 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
         if (req.files && req.files.length > 0) {
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
-                const imageUrl = `/uploads/gallery/${file.filename}`;
+                // ✅ FIX: Tanpa leading slash
+                const imageUrl = `uploads/gallery/${file.filename}`;
                 const isPrimary = i === 0;
                 
                 await client.query(`
@@ -227,7 +231,9 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                 );
                 
                 for (const img of imagesToDelete.rows) {
-                    const filePath = path.join(__dirname, '../public', img.image_url);
+                    // Handle both formats: with or without leading slash
+                    const cleanPath = img.image_url.startsWith('/') ? img.image_url.substring(1) : img.image_url;
+                    const filePath = path.join(__dirname, '../public', cleanPath);
                     try {
                         await fs.unlink(filePath);
                     } catch (err) {
@@ -246,7 +252,8 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             let nextOrder = maxOrderResult.rows[0].max_order + 1;
             
             for (const file of req.files) {
-                const imageUrl = `/uploads/gallery/${file.filename}`;
+                // ✅ FIX: Tanpa leading slash
+                const imageUrl = `uploads/gallery/${file.filename}`;
                 await client.query(`
                     INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
                     VALUES ($1, $2, $3, $4)
@@ -306,7 +313,9 @@ router.delete('/delete/:id', async (req, res) => {
         );
         
         for (const img of imagesResult.rows) {
-            const filePath = path.join(__dirname, '../public', img.image_url);
+            // Handle both formats: with or without leading slash
+            const cleanPath = img.image_url.startsWith('/') ? img.image_url.substring(1) : img.image_url;
+            const filePath = path.join(__dirname, '../public', cleanPath);
             try {
                 await fs.unlink(filePath);
             } catch (err) {
