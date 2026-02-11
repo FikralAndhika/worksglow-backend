@@ -34,10 +34,11 @@ const corsOptions = {
     'http://127.0.0.1:3000',
     'http://127.0.0.1:5173',
     
-    // ✅ Production Frontend (Vercel) - KEDUA DOMAIN
-    'https://worksglow.vercel.app',      // tanpa 's'
-    'https://worksglows.vercel.app',     // dengan 's'
-    'https://worksglow-backend.vercel.app',  // backend domain
+    // ✅ Production Frontend & Backend - SEMUA VARIAN
+    'https://worksglow.vercel.app',          // frontend tanpa 's'
+    'https://worksglows.vercel.app',         // frontend dengan 's'
+    'https://worksglow-backend.vercel.app',  // backend tanpa 's'
+    'https://worksglow-backends.vercel.app', // backend dengan 's'
     
     // Add more production domains if needed
     // 'https://www.worksglow.com',
