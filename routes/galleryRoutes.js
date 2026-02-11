@@ -1,47 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { pool, query } = require('../config/db');
+const { pool } = require('../config/db');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs').promises;
-
-// ============================================
-// HELPER: Get full URL for images
-// ============================================
-function getFullImageUrl(req, relativePath) {
-    // Remove leading slash if exists for consistency
-    const cleanPath = relativePath.startsWith('/') ? relativePath.substring(1) : relativePath;
-    
-    // Get base URL from request or use environment variable
-    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    return `${baseUrl}/${cleanPath}`;
-}
+const { put, del } = require('@vercel/blob');
 
 // ============================================
 // MULTER CONFIGURATION FOR GALLERY IMAGES
 // ============================================
-const storage = multer.diskStorage({
-    destination: async function (req, file, cb) {
-        const uploadDir = path.join(__dirname, '../public/uploads/gallery');
-        try {
-            await fs.mkdir(uploadDir, { recursive: true });
-            cb(null, uploadDir);
-        } catch (error) {
-            cb(error);
-        }
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'gallery-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
-
 const upload = multer({
-    storage: storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
     fileFilter: function (req, file, cb) {
         const allowedTypes = /jpeg|jpg|png|webp/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const extname = allowedTypes.test(file.originalname.toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype);
         
         if (extname && mimetype) {
@@ -51,6 +22,40 @@ const upload = multer({
         }
     }
 });
+
+// ============================================
+// HELPER: Upload to Vercel Blob
+// ============================================
+async function uploadToBlob(file) {
+    if (!file) return null;
+    
+    try {
+        const filename = `gallery-${Date.now()}-${Math.round(Math.random() * 1E9)}${file.originalname.substring(file.originalname.lastIndexOf('.'))}`;
+        const blob = await put(filename, file.buffer, {
+            access: 'public',
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+        return blob.url;
+    } catch (error) {
+        console.error('Blob upload error:', error);
+        return null;
+    }
+}
+
+// ============================================
+// HELPER: Delete from Vercel Blob
+// ============================================
+async function deleteFromBlob(url) {
+    if (!url) return;
+    
+    try {
+        await del(url, {
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+        });
+    } catch (error) {
+        console.error('Blob delete error:', error);
+    }
+}
 
 // ============================================
 // GET ALL GALLERY PROJECTS (PUBLIC)
@@ -72,15 +77,9 @@ router.get('/', async (req, res) => {
                     ORDER BY image_order ASC
                 `, [project.id]);
                 
-                // ✅ Convert relative URLs to full URLs
-                const imagesWithFullUrl = imagesResult.rows.map(img => ({
-                    ...img,
-                    image_url: getFullImageUrl(req, img.image_url)
-                }));
-                
                 return {
                     ...project,
-                    images: imagesWithFullUrl
+                    images: imagesResult.rows
                 };
             })
         );
@@ -127,17 +126,19 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
         
         const project = projectResult.rows[0];
         
+        // Upload images to Vercel Blob
         if (req.files && req.files.length > 0) {
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
-                // ✅ FIX: Tanpa leading slash
-                const imageUrl = `uploads/gallery/${file.filename}`;
-                const isPrimary = i === 0;
+                const imageUrl = await uploadToBlob(file);
                 
-                await client.query(`
-                    INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
-                    VALUES ($1, $2, $3, $4)
-                `, [project.id, imageUrl, i, isPrimary]);
+                if (imageUrl) {
+                    const isPrimary = i === 0;
+                    await client.query(`
+                        INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
+                        VALUES ($1, $2, $3, $4)
+                    `, [project.id, imageUrl, i, isPrimary]);
+                }
             }
         }
         
@@ -150,18 +151,12 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
             ORDER BY image_order ASC
         `, [project.id]);
         
-        // ✅ Convert relative URLs to full URLs
-        const imagesWithFullUrl = imagesResult.rows.map(img => ({
-            ...img,
-            image_url: getFullImageUrl(req, img.image_url)
-        }));
-        
         res.json({
             status: 'success',
             message: 'Project created successfully',
             data: {
                 ...project,
-                images: imagesWithFullUrl
+                images: imagesResult.rows
             }
         });
     } catch (error) {
@@ -230,15 +225,9 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                     [imageIds]
                 );
                 
+                // Delete from Blob storage
                 for (const img of imagesToDelete.rows) {
-                    // Handle both formats: with or without leading slash
-                    const cleanPath = img.image_url.startsWith('/') ? img.image_url.substring(1) : img.image_url;
-                    const filePath = path.join(__dirname, '../public', cleanPath);
-                    try {
-                        await fs.unlink(filePath);
-                    } catch (err) {
-                        console.error('Failed to delete image file:', err);
-                    }
+                    await deleteFromBlob(img.image_url);
                 }
             }
         }
@@ -252,12 +241,14 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             let nextOrder = maxOrderResult.rows[0].max_order + 1;
             
             for (const file of req.files) {
-                // ✅ FIX: Tanpa leading slash
-                const imageUrl = `uploads/gallery/${file.filename}`;
-                await client.query(`
-                    INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
-                    VALUES ($1, $2, $3, $4)
-                `, [id, imageUrl, nextOrder++, false]);
+                const imageUrl = await uploadToBlob(file);
+                
+                if (imageUrl) {
+                    await client.query(`
+                        INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
+                        VALUES ($1, $2, $3, $4)
+                    `, [id, imageUrl, nextOrder++, false]);
+                }
             }
         }
         
@@ -270,18 +261,12 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             ORDER BY image_order ASC
         `, [id]);
         
-        // ✅ Convert relative URLs to full URLs
-        const imagesWithFullUrl = imagesResult.rows.map(img => ({
-            ...img,
-            image_url: getFullImageUrl(req, img.image_url)
-        }));
-        
         res.json({
             status: 'success',
             message: 'Project updated successfully',
             data: {
                 ...projectResult.rows[0],
-                images: imagesWithFullUrl
+                images: imagesResult.rows
             }
         });
     } catch (error) {
@@ -312,15 +297,9 @@ router.delete('/delete/:id', async (req, res) => {
             [id]
         );
         
+        // Delete images from Blob storage
         for (const img of imagesResult.rows) {
-            // Handle both formats: with or without leading slash
-            const cleanPath = img.image_url.startsWith('/') ? img.image_url.substring(1) : img.image_url;
-            const filePath = path.join(__dirname, '../public', cleanPath);
-            try {
-                await fs.unlink(filePath);
-            } catch (err) {
-                console.error('Failed to delete image file:', err);
-            }
+            await deleteFromBlob(img.image_url);
         }
         
         const deleteResult = await client.query(
@@ -380,15 +359,9 @@ router.get('/:id', async (req, res) => {
             ORDER BY image_order ASC
         `, [id]);
         
-        // ✅ Convert relative URLs to full URLs
-        const imagesWithFullUrl = imagesResult.rows.map(img => ({
-            ...img,
-            image_url: getFullImageUrl(req, img.image_url)
-        }));
-        
         const project = {
             ...projectResult.rows[0],
-            images: imagesWithFullUrl
+            images: imagesResult.rows
         };
         
         res.json({
