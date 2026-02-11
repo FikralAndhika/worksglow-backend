@@ -132,26 +132,37 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log('='.repeat(50));
-  console.log('🚀 WORKSGLOW BACKEND SERVER');
-  console.log('='.repeat(50));
-  console.log(`📡 Server running on: http://localhost:${PORT}`);
-  console.log(`🔌 API Base URL: http://localhost:${PORT}/api`);
-  console.log(`🖼️  Uploads URL: http://localhost:${PORT}/uploads`);
-  console.log('='.repeat(50));
-  console.log('📋 Available Endpoints:');
-  console.log('   - GET  /api/test');
-  console.log('   - GET  /api/db-test');
-  console.log('   - POST /api/auth/*');
-  console.log('   - GET  /api/services');
-  console.log('   - GET  /api/hero');
-  console.log('   - POST /api/contact');
-  console.log('   - GET  /api/gallery');
-  console.log('   - GET  /api/about');
-  console.log('='.repeat(50));
-  console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 CORS Enabled for ${corsOptions.origin.length} origins`);
-  console.log('='.repeat(50));
-});
+// ============================================
+// ✅ VERCEL SERVERLESS EXPORT
+// ============================================
+// For Vercel deployment - export the app as a serverless function
+module.exports = app;
+
+// ============================================
+// ✅ LOCAL DEVELOPMENT SERVER
+// ============================================
+// Only start server if running locally (not on Vercel)
+if (process.env.NODE_ENV !== 'production' && require.main === module) {
+  app.listen(PORT, () => {
+    console.log('='.repeat(50));
+    console.log('🚀 WORKSGLOW BACKEND SERVER');
+    console.log('='.repeat(50));
+    console.log(`📡 Server running on: http://localhost:${PORT}`);
+    console.log(`🔌 API Base URL: http://localhost:${PORT}/api`);
+    console.log(`🖼️  Uploads URL: http://localhost:${PORT}/uploads`);
+    console.log('='.repeat(50));
+    console.log('📋 Available Endpoints:');
+    console.log('   - GET  /api/test');
+    console.log('   - GET  /api/db-test');
+    console.log('   - POST /api/auth/*');
+    console.log('   - GET  /api/services');
+    console.log('   - GET  /api/hero');
+    console.log('   - POST /api/contact');
+    console.log('   - GET  /api/gallery');
+    console.log('   - GET  /api/about');
+    console.log('='.repeat(50));
+    console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 CORS Enabled for ${corsOptions.origin.length} origins`);
+    console.log('='.repeat(50));
+  });
+}
