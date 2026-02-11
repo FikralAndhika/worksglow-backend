@@ -1,32 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { put } = require('@vercel/blob');
 const { authenticateToken } = require('../middleware/auth');
 const { query } = require('../config/db');
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const uploadDir = path.join(__dirname, '../public/uploads/hero');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'hero-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
-
+// Configure multer for memory storage (instead of disk)
 const upload = multer({
-    storage: storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
     fileFilter: function (req, file, cb) {
         const allowedTypes = /jpeg|jpg|png|gif|webp/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const extname = allowedTypes.test(file.originalname.toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype);
 
         if (mimetype && extname) {
@@ -76,11 +61,27 @@ router.post('/update', authenticateToken, upload.fields([
             hero3Subtitle, hero3Title, hero3Description
         } = req.body;
 
+        // Helper function to upload to Vercel Blob
+        async function uploadToBlob(file) {
+            if (!file) return null;
+            
+            try {
+                const filename = `hero-${Date.now()}-${Math.round(Math.random() * 1E9)}${file.originalname.substring(file.originalname.lastIndexOf('.'))}`;
+                const blob = await put(filename, file.buffer, {
+                    access: 'public',
+                    token: process.env.BLOB_READ_WRITE_TOKEN,
+                });
+                return blob.url;
+            } catch (error) {
+                console.error('Blob upload error:', error);
+                return null;
+            }
+        }
+
         // Update Slide 1
         let hero1ImageUrl = null;
         if (req.files && req.files['hero1Image']) {
-            // ✅ FIX: Tanpa leading slash, path relatif
-            hero1ImageUrl = `uploads/hero/${req.files['hero1Image'][0].filename}`;
+            hero1ImageUrl = await uploadToBlob(req.files['hero1Image'][0]);
         }
 
         await query(
@@ -95,8 +96,7 @@ router.post('/update', authenticateToken, upload.fields([
         // Update Slide 2
         let hero2ImageUrl = null;
         if (req.files && req.files['hero2Image']) {
-            // ✅ FIX: Tanpa leading slash, path relatif
-            hero2ImageUrl = `uploads/hero/${req.files['hero2Image'][0].filename}`;
+            hero2ImageUrl = await uploadToBlob(req.files['hero2Image'][0]);
         }
 
         await query(
@@ -111,8 +111,7 @@ router.post('/update', authenticateToken, upload.fields([
         // Update Slide 3
         let hero3ImageUrl = null;
         if (req.files && req.files['hero3Image']) {
-            // ✅ FIX: Tanpa leading slash, path relatif
-            hero3ImageUrl = `uploads/hero/${req.files['hero3Image'][0].filename}`;
+            hero3ImageUrl = await uploadToBlob(req.files['hero3Image'][0]);
         }
 
         await query(
