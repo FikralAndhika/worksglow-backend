@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../config/db');
+const pool = require('../config/db'); // ✅ FIXED: Removed destructuring
 const multer = require('multer');
 const { put, del } = require('@vercel/blob');
 
@@ -30,15 +30,23 @@ async function uploadToBlob(file) {
     if (!file) return null;
     
     try {
+        // ✅ ADD LOGGING FOR DEBUG
+        console.log('🔧 Uploading to Blob...');
+        console.log('📁 File:', file.originalname);
+        console.log('🔑 Token exists:', !!process.env.BLOB_READ_WRITE_TOKEN);
+        
         const filename = `gallery-${Date.now()}-${Math.round(Math.random() * 1E9)}${file.originalname.substring(file.originalname.lastIndexOf('.'))}`;
+        
         const blob = await put(filename, file.buffer, {
             access: 'public',
             token: process.env.BLOB_READ_WRITE_TOKEN,
         });
+        
+        console.log('✅ Blob uploaded:', blob.url);
         return blob.url;
     } catch (error) {
-        console.error('Blob upload error:', error);
-        return null;
+        console.error('❌ Blob upload error:', error);
+        throw error; // ✅ THROW ERROR instead of returning null
     }
 }
 
@@ -49,11 +57,14 @@ async function deleteFromBlob(url) {
     if (!url) return;
     
     try {
+        console.log('🗑️ Deleting from Blob:', url);
         await del(url, {
             token: process.env.BLOB_READ_WRITE_TOKEN,
         });
+        console.log('✅ Blob deleted');
     } catch (error) {
-        console.error('Blob delete error:', error);
+        console.error('❌ Blob delete error:', error);
+        // Don't throw, just log - deletion errors shouldn't block the request
     }
 }
 
@@ -92,7 +103,8 @@ router.get('/', async (req, res) => {
         console.error('Error fetching gallery:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch gallery projects'
+            message: 'Failed to fetch gallery projects',
+            error: error.message // ✅ ADD ERROR DETAILS
         });
     }
 });
@@ -117,6 +129,8 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
             display_order = 0
         } = req.body;
         
+        console.log('📝 Creating project:', { title, subtitle });
+        
         const projectResult = await client.query(`
             INSERT INTO gallery_projects 
             (title, subtitle, description, vehicle_type, service_type, duration, completed_date, display_order)
@@ -125,9 +139,12 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
         `, [title, subtitle, description, vehicle_type, service_type, duration, completed_date, display_order]);
         
         const project = projectResult.rows[0];
+        console.log('✅ Project created with ID:', project.id);
         
         // Upload images to Vercel Blob
         if (req.files && req.files.length > 0) {
+            console.log(`📸 Uploading ${req.files.length} images...`);
+            
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 const imageUrl = await uploadToBlob(file);
@@ -138,11 +155,13 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
                         INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
                         VALUES ($1, $2, $3, $4)
                     `, [project.id, imageUrl, i, isPrimary]);
+                    console.log(`✅ Image ${i + 1} saved to DB`);
                 }
             }
         }
         
         await client.query('COMMIT');
+        console.log('✅ Transaction committed');
         
         const imagesResult = await client.query(`
             SELECT id, image_url, image_order, is_primary 
@@ -161,10 +180,11 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error creating project:', error);
+        console.error('❌ Error creating project:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to create project'
+            message: 'Failed to create project',
+            error: error.message // ✅ ADD ERROR DETAILS
         });
     } finally {
         client.release();
@@ -193,6 +213,8 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             deleted_images
         } = req.body;
         
+        console.log('📝 Updating project ID:', id);
+        
         // Update project
         const projectResult = await client.query(`
             UPDATE gallery_projects 
@@ -211,10 +233,14 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             });
         }
         
+        console.log('✅ Project updated');
+        
         // Delete specified images
         if (deleted_images) {
             const imageIds = JSON.parse(deleted_images);
             if (imageIds.length > 0) {
+                console.log(`🗑️ Deleting ${imageIds.length} images...`);
+                
                 const imagesToDelete = await client.query(
                     'SELECT image_url FROM gallery_images WHERE id = ANY($1)',
                     [imageIds]
@@ -229,11 +255,15 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                 for (const img of imagesToDelete.rows) {
                     await deleteFromBlob(img.image_url);
                 }
+                
+                console.log('✅ Images deleted');
             }
         }
         
         // Add new images
         if (req.files && req.files.length > 0) {
+            console.log(`📸 Adding ${req.files.length} new images...`);
+            
             const maxOrderResult = await client.query(
                 'SELECT COALESCE(MAX(image_order), -1) as max_order FROM gallery_images WHERE project_id = $1',
                 [id]
@@ -250,9 +280,12 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                     `, [id, imageUrl, nextOrder++, false]);
                 }
             }
+            
+            console.log('✅ New images added');
         }
         
         await client.query('COMMIT');
+        console.log('✅ Transaction committed');
         
         const imagesResult = await client.query(`
             SELECT id, image_url, image_order, is_primary 
@@ -271,10 +304,11 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error updating project:', error);
+        console.error('❌ Error updating project:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to update project'
+            message: 'Failed to update project',
+            error: error.message // ✅ ADD ERROR DETAILS
         });
     } finally {
         client.release();
@@ -292,10 +326,14 @@ router.delete('/delete/:id', async (req, res) => {
         
         const { id } = req.params;
         
+        console.log('🗑️ Deleting project ID:', id);
+        
         const imagesResult = await pool.query(
             'SELECT image_url FROM gallery_images WHERE project_id = $1',
             [id]
         );
+        
+        console.log(`🗑️ Found ${imagesResult.rows.length} images to delete`);
         
         // Delete images from Blob storage
         for (const img of imagesResult.rows) {
@@ -316,6 +354,7 @@ router.delete('/delete/:id', async (req, res) => {
         }
         
         await client.query('COMMIT');
+        console.log('✅ Project deleted successfully');
         
         res.json({
             status: 'success',
@@ -323,10 +362,11 @@ router.delete('/delete/:id', async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error deleting project:', error);
+        console.error('❌ Error deleting project:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to delete project'
+            message: 'Failed to delete project',
+            error: error.message // ✅ ADD ERROR DETAILS
         });
     } finally {
         client.release();
@@ -372,7 +412,8 @@ router.get('/:id', async (req, res) => {
         console.error('Error fetching project:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch project'
+            message: 'Failed to fetch project',
+            error: error.message // ✅ ADD ERROR DETAILS
         });
     }
 });
