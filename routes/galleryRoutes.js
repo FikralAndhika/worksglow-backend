@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../config/db'); // ✅ DESTRUCTURE because db.js exports { pool, query }
+const { pool } = require('../config/db');
 const multer = require('multer');
 const { put, del } = require('@vercel/blob');
 
@@ -70,7 +70,6 @@ async function uploadToBlob(file) {
         console.error('   Name:', error.name);
         console.error('   Stack:', error.stack);
         
-        // Check if it's a specific Blob error
         if (error.message?.includes('token')) {
             console.error('🔑 TOKEN ERROR: Check if BLOB_READ_WRITE_TOKEN is valid');
         }
@@ -226,7 +225,7 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
 });
 
 // ============================================
-// UPDATE GALLERY PROJECT - IMPROVED VERSION
+// UPDATE GALLERY PROJECT - FULL FIXED VERSION
 // ============================================
 router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
     const client = await pool.connect();
@@ -235,6 +234,16 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
         await client.query('BEGIN');
         
         const { id } = req.params;
+        
+        // ✅ LOG SEMUA REQUEST DATA
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📝 UPDATE REQUEST DEBUG');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('ID:', id);
+        console.log('Body:', req.body);
+        console.log('Files:', req.files ? req.files.map(f => ({ name: f.originalname, size: f.size })) : 'none');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        
         const {
             title,
             subtitle,
@@ -247,23 +256,16 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             deleted_images
         } = req.body;
         
-        // ✅ DETAILED LOGGING
-        console.log('📝 Update Request for ID:', id);
-        console.log('📋 Data:', {
-            title,
-            subtitle,
-            description,
-            vehicle_type,
-            service_type,
-            duration,
-            completed_date,
-            display_order,
-            has_new_images: !!(req.files && req.files.length),
-            files_count: req.files ? req.files.length : 0,
-            deleted_images
-        });
+        // ✅ VALIDASI ID
+        if (!id || isNaN(parseInt(id))) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid project ID'
+            });
+        }
         
-        // ✅ CHECK IF PROJECT EXISTS FIRST
+        // ✅ CHECK IF PROJECT EXISTS
         const checkProject = await client.query(
             'SELECT id FROM gallery_projects WHERE id = $1',
             [id]
@@ -279,36 +281,72 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
         
         console.log('✅ Project exists, proceeding with update');
         
-        // ✅ IMPROVED UPDATE QUERY WITH COALESCE
-        const projectResult = await client.query(`
-            UPDATE gallery_projects 
-            SET 
-                title = COALESCE($1, title),
-                subtitle = COALESCE($2, subtitle),
-                description = COALESCE($3, description),
-                vehicle_type = COALESCE($4, vehicle_type),
-                service_type = COALESCE($5, service_type),
-                duration = COALESCE($6, duration),
-                completed_date = COALESCE($7, completed_date),
-                display_order = COALESCE($8::INTEGER, display_order),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $9
-            RETURNING *
-        `, [
-            title || null,
-            subtitle || null,
-            description || null,
-            vehicle_type || null,
-            service_type || null,
-            duration || null,
-            completed_date || null,
-            display_order !== undefined && display_order !== '' ? parseInt(display_order) : null,
-            id
-        ]);
+        // ✅ UPDATE PROJECT - HANDLE NULL VALUES PROPERLY
+        const updateFields = [];
+        const updateValues = [];
+        let paramIndex = 1;
         
-        console.log('✅ Project metadata updated');
+        if (title !== undefined && title !== '') {
+            updateFields.push(`title = $${paramIndex++}`);
+            updateValues.push(title);
+        }
+        if (subtitle !== undefined && subtitle !== '') {
+            updateFields.push(`subtitle = $${paramIndex++}`);
+            updateValues.push(subtitle);
+        }
+        if (description !== undefined && description !== '') {
+            updateFields.push(`description = $${paramIndex++}`);
+            updateValues.push(description);
+        }
+        if (vehicle_type !== undefined && vehicle_type !== '') {
+            updateFields.push(`vehicle_type = $${paramIndex++}`);
+            updateValues.push(vehicle_type);
+        }
+        if (service_type !== undefined && service_type !== '') {
+            updateFields.push(`service_type = $${paramIndex++}`);
+            updateValues.push(service_type);
+        }
+        if (duration !== undefined && duration !== '') {
+            updateFields.push(`duration = $${paramIndex++}`);
+            updateValues.push(duration);
+        }
+        if (completed_date !== undefined && completed_date !== '') {
+            updateFields.push(`completed_date = $${paramIndex++}`);
+            updateValues.push(completed_date);
+        }
+        if (display_order !== undefined && display_order !== '') {
+            updateFields.push(`display_order = $${paramIndex++}`);
+            updateValues.push(parseInt(display_order));
+        }
         
-        // ✅ DELETE SPECIFIED IMAGES WITH ERROR HANDLING
+        // Always update timestamp
+        updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+        updateValues.push(id);
+        
+        let projectResult;
+        if (updateFields.length > 1) { // More than just timestamp
+            const updateQuery = `
+                UPDATE gallery_projects 
+                SET ${updateFields.join(', ')}
+                WHERE id = $${paramIndex}
+                RETURNING *
+            `;
+            
+            console.log('📝 Update query:', updateQuery);
+            console.log('📝 Update values:', updateValues);
+            
+            projectResult = await client.query(updateQuery, updateValues);
+            console.log('✅ Project metadata updated');
+        } else {
+            // No metadata changes, just fetch current
+            projectResult = await client.query(
+                'SELECT * FROM gallery_projects WHERE id = $1',
+                [id]
+            );
+            console.log('ℹ️ No metadata changes');
+        }
+        
+        // ✅ DELETE SPECIFIED IMAGES
         if (deleted_images) {
             try {
                 const imageIds = JSON.parse(deleted_images);
@@ -319,8 +357,6 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                         'SELECT image_url FROM gallery_images WHERE id = ANY($1) AND project_id = $2',
                         [imageIds, id]
                     );
-                    
-                    console.log(`🔍 Found ${imagesToDelete.rows.length} images to delete`);
                     
                     if (imagesToDelete.rows.length > 0) {
                         await client.query(
@@ -333,16 +369,15 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                             await deleteFromBlob(img.image_url);
                         }
                         
-                        console.log('✅ Images deleted from DB and Blob');
+                        console.log(`✅ Deleted ${imagesToDelete.rows.length} images from DB and Blob`);
                     }
                 }
             } catch (parseError) {
                 console.error('⚠️ Error processing deleted_images:', parseError);
-                // Don't fail the whole request
             }
         }
         
-        // ✅ ADD NEW IMAGES WITH BETTER ERROR HANDLING
+        // ✅ ADD NEW IMAGES
         if (req.files && req.files.length > 0) {
             console.log(`📸 Processing ${req.files.length} new images...`);
             
@@ -352,8 +387,7 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             );
             let nextOrder = maxOrderResult.rows[0].max_order + 1;
             
-            console.log(`📊 Next image order will be: ${nextOrder}`);
-            
+            let uploadedCount = 0;
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 try {
@@ -367,15 +401,16 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                             VALUES ($1, $2, $3, $4)
                         `, [id, imageUrl, nextOrder++, false]);
                         
-                        console.log(`✅ Image ${i + 1} uploaded and saved: ${imageUrl}`);
+                        uploadedCount++;
+                        console.log(`✅ Image ${i + 1} uploaded: ${imageUrl}`);
                     }
                 } catch (uploadError) {
-                    console.error(`❌ Error uploading image ${i + 1}:`, uploadError);
+                    console.error(`❌ Error uploading image ${i + 1}:`, uploadError.message);
                     // Continue with other images
                 }
             }
             
-            console.log('✅ All new images processed');
+            console.log(`✅ Uploaded ${uploadedCount}/${req.files.length} images successfully`);
         }
         
         await client.query('COMMIT');
@@ -399,10 +434,12 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
                 images: imagesResult.rows
             }
         });
+        
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('❌ CRITICAL ERROR updating project:', error);
-        console.error('Stack:', error.stack);
+        console.error('❌ CRITICAL ERROR updating project:');
+        console.error('   Message:', error.message);
+        console.error('   Stack:', error.stack);
         
         res.status(500).json({
             status: 'error',
