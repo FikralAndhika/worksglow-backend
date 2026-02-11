@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/db'); // ✅ FIXED: Removed destructuring
+const { pool } = require('../config/db'); // ✅ DESTRUCTURE because db.js exports { pool, query }
 const multer = require('multer');
 const { put, del } = require('@vercel/blob');
 
@@ -30,7 +30,6 @@ async function uploadToBlob(file) {
     if (!file) return null;
     
     try {
-        // ✅ ADD LOGGING FOR DEBUG
         console.log('🔧 Uploading to Blob...');
         console.log('📁 File:', file.originalname);
         console.log('🔑 Token exists:', !!process.env.BLOB_READ_WRITE_TOKEN);
@@ -46,7 +45,7 @@ async function uploadToBlob(file) {
         return blob.url;
     } catch (error) {
         console.error('❌ Blob upload error:', error);
-        throw error; // ✅ THROW ERROR instead of returning null
+        throw error;
     }
 }
 
@@ -64,7 +63,6 @@ async function deleteFromBlob(url) {
         console.log('✅ Blob deleted');
     } catch (error) {
         console.error('❌ Blob delete error:', error);
-        // Don't throw, just log - deletion errors shouldn't block the request
     }
 }
 
@@ -104,7 +102,7 @@ router.get('/', async (req, res) => {
         res.status(500).json({
             status: 'error',
             message: 'Failed to fetch gallery projects',
-            error: error.message // ✅ ADD ERROR DETAILS
+            error: error.message
         });
     }
 });
@@ -184,7 +182,7 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
         res.status(500).json({
             status: 'error',
             message: 'Failed to create project',
-            error: error.message // ✅ ADD ERROR DETAILS
+            error: error.message
         });
     } finally {
         client.release();
@@ -192,7 +190,7 @@ router.post('/create', upload.array('images', 10), async (req, res) => {
 });
 
 // ============================================
-// UPDATE GALLERY PROJECT
+// UPDATE GALLERY PROJECT - IMPROVED VERSION
 // ============================================
 router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
     const client = await pool.connect();
@@ -213,56 +211,104 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             deleted_images
         } = req.body;
         
-        console.log('📝 Updating project ID:', id);
+        // ✅ DETAILED LOGGING
+        console.log('📝 Update Request for ID:', id);
+        console.log('📋 Data:', {
+            title,
+            subtitle,
+            description,
+            vehicle_type,
+            service_type,
+            duration,
+            completed_date,
+            display_order,
+            has_new_images: !!(req.files && req.files.length),
+            files_count: req.files ? req.files.length : 0,
+            deleted_images
+        });
         
-        // Update project
-        const projectResult = await client.query(`
-            UPDATE gallery_projects 
-            SET title = $1, subtitle = $2, description = $3, vehicle_type = $4,
-                service_type = $5, duration = $6, completed_date = $7, display_order = $8,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $9
-            RETURNING *
-        `, [title, subtitle, description, vehicle_type, service_type, duration, completed_date, display_order, id]);
+        // ✅ CHECK IF PROJECT EXISTS FIRST
+        const checkProject = await client.query(
+            'SELECT id FROM gallery_projects WHERE id = $1',
+            [id]
+        );
         
-        if (projectResult.rows.length === 0) {
+        if (checkProject.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({
                 status: 'error',
-                message: 'Project not found'
+                message: `Project with ID ${id} not found`
             });
         }
         
-        console.log('✅ Project updated');
+        console.log('✅ Project exists, proceeding with update');
         
-        // Delete specified images
+        // ✅ IMPROVED UPDATE QUERY WITH COALESCE
+        const projectResult = await client.query(`
+            UPDATE gallery_projects 
+            SET 
+                title = COALESCE($1, title),
+                subtitle = COALESCE($2, subtitle),
+                description = COALESCE($3, description),
+                vehicle_type = COALESCE($4, vehicle_type),
+                service_type = COALESCE($5, service_type),
+                duration = COALESCE($6, duration),
+                completed_date = COALESCE($7, completed_date),
+                display_order = COALESCE($8::INTEGER, display_order),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $9
+            RETURNING *
+        `, [
+            title || null,
+            subtitle || null,
+            description || null,
+            vehicle_type || null,
+            service_type || null,
+            duration || null,
+            completed_date || null,
+            display_order !== undefined && display_order !== '' ? parseInt(display_order) : null,
+            id
+        ]);
+        
+        console.log('✅ Project metadata updated');
+        
+        // ✅ DELETE SPECIFIED IMAGES WITH ERROR HANDLING
         if (deleted_images) {
-            const imageIds = JSON.parse(deleted_images);
-            if (imageIds.length > 0) {
-                console.log(`🗑️ Deleting ${imageIds.length} images...`);
-                
-                const imagesToDelete = await client.query(
-                    'SELECT image_url FROM gallery_images WHERE id = ANY($1)',
-                    [imageIds]
-                );
-                
-                await client.query(
-                    'DELETE FROM gallery_images WHERE id = ANY($1)',
-                    [imageIds]
-                );
-                
-                // Delete from Blob storage
-                for (const img of imagesToDelete.rows) {
-                    await deleteFromBlob(img.image_url);
+            try {
+                const imageIds = JSON.parse(deleted_images);
+                if (Array.isArray(imageIds) && imageIds.length > 0) {
+                    console.log(`🗑️ Deleting ${imageIds.length} images:`, imageIds);
+                    
+                    const imagesToDelete = await client.query(
+                        'SELECT image_url FROM gallery_images WHERE id = ANY($1) AND project_id = $2',
+                        [imageIds, id]
+                    );
+                    
+                    console.log(`🔍 Found ${imagesToDelete.rows.length} images to delete`);
+                    
+                    if (imagesToDelete.rows.length > 0) {
+                        await client.query(
+                            'DELETE FROM gallery_images WHERE id = ANY($1) AND project_id = $2',
+                            [imageIds, id]
+                        );
+                        
+                        // Delete from Blob storage
+                        for (const img of imagesToDelete.rows) {
+                            await deleteFromBlob(img.image_url);
+                        }
+                        
+                        console.log('✅ Images deleted from DB and Blob');
+                    }
                 }
-                
-                console.log('✅ Images deleted');
+            } catch (parseError) {
+                console.error('⚠️ Error processing deleted_images:', parseError);
+                // Don't fail the whole request
             }
         }
         
-        // Add new images
+        // ✅ ADD NEW IMAGES WITH BETTER ERROR HANDLING
         if (req.files && req.files.length > 0) {
-            console.log(`📸 Adding ${req.files.length} new images...`);
+            console.log(`📸 Processing ${req.files.length} new images...`);
             
             const maxOrderResult = await client.query(
                 'SELECT COALESCE(MAX(image_order), -1) as max_order FROM gallery_images WHERE project_id = $1',
@@ -270,29 +316,44 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
             );
             let nextOrder = maxOrderResult.rows[0].max_order + 1;
             
-            for (const file of req.files) {
-                const imageUrl = await uploadToBlob(file);
-                
-                if (imageUrl) {
-                    await client.query(`
-                        INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
-                        VALUES ($1, $2, $3, $4)
-                    `, [id, imageUrl, nextOrder++, false]);
+            console.log(`📊 Next image order will be: ${nextOrder}`);
+            
+            for (let i = 0; i < req.files.length; i++) {
+                const file = req.files[i];
+                try {
+                    console.log(`📤 Uploading image ${i + 1}/${req.files.length}: ${file.originalname}`);
+                    
+                    const imageUrl = await uploadToBlob(file);
+                    
+                    if (imageUrl) {
+                        await client.query(`
+                            INSERT INTO gallery_images (project_id, image_url, image_order, is_primary)
+                            VALUES ($1, $2, $3, $4)
+                        `, [id, imageUrl, nextOrder++, false]);
+                        
+                        console.log(`✅ Image ${i + 1} uploaded and saved: ${imageUrl}`);
+                    }
+                } catch (uploadError) {
+                    console.error(`❌ Error uploading image ${i + 1}:`, uploadError);
+                    // Continue with other images
                 }
             }
             
-            console.log('✅ New images added');
+            console.log('✅ All new images processed');
         }
         
         await client.query('COMMIT');
-        console.log('✅ Transaction committed');
+        console.log('✅ Transaction committed successfully');
         
+        // Fetch updated data
         const imagesResult = await client.query(`
             SELECT id, image_url, image_order, is_primary 
             FROM gallery_images 
             WHERE project_id = $1 
             ORDER BY image_order ASC
         `, [id]);
+        
+        console.log(`📊 Project now has ${imagesResult.rows.length} images`);
         
         res.json({
             status: 'success',
@@ -304,11 +365,14 @@ router.post('/update/:id', upload.array('newImages', 10), async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('❌ Error updating project:', error);
+        console.error('❌ CRITICAL ERROR updating project:', error);
+        console.error('Stack:', error.stack);
+        
         res.status(500).json({
             status: 'error',
             message: 'Failed to update project',
-            error: error.message // ✅ ADD ERROR DETAILS
+            error: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     } finally {
         client.release();
@@ -366,7 +430,7 @@ router.delete('/delete/:id', async (req, res) => {
         res.status(500).json({
             status: 'error',
             message: 'Failed to delete project',
-            error: error.message // ✅ ADD ERROR DETAILS
+            error: error.message
         });
     } finally {
         client.release();
@@ -413,7 +477,7 @@ router.get('/:id', async (req, res) => {
         res.status(500).json({
             status: 'error',
             message: 'Failed to fetch project',
-            error: error.message // ✅ ADD ERROR DETAILS
+            error: error.message
         });
     }
 });
