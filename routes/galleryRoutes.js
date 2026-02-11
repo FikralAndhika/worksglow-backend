@@ -27,25 +27,61 @@ const upload = multer({
 // HELPER: Upload to Vercel Blob
 // ============================================
 async function uploadToBlob(file) {
-    if (!file) return null;
+    if (!file) {
+        console.log('⚠️ No file provided to uploadToBlob');
+        return null;
+    }
     
     try {
-        console.log('🔧 Uploading to Blob...');
-        console.log('📁 File:', file.originalname);
+        console.log('🔧 Starting Blob upload...');
+        console.log('📁 File name:', file.originalname);
+        console.log('📁 File size:', file.size, 'bytes');
+        console.log('📁 File mimetype:', file.mimetype);
+        console.log('📁 Buffer size:', file.buffer?.length, 'bytes');
         console.log('🔑 Token exists:', !!process.env.BLOB_READ_WRITE_TOKEN);
+        console.log('🔑 Token length:', process.env.BLOB_READ_WRITE_TOKEN?.length);
+        
+        // Validate file buffer
+        if (!file.buffer || file.buffer.length === 0) {
+            throw new Error('File buffer is empty or undefined');
+        }
+        
+        // Validate token
+        if (!process.env.BLOB_READ_WRITE_TOKEN) {
+            throw new Error('BLOB_READ_WRITE_TOKEN is not set in environment variables');
+        }
         
         const filename = `gallery-${Date.now()}-${Math.round(Math.random() * 1E9)}${file.originalname.substring(file.originalname.lastIndexOf('.'))}`;
+        console.log('📝 Generated filename:', filename);
         
         const blob = await put(filename, file.buffer, {
             access: 'public',
             token: process.env.BLOB_READ_WRITE_TOKEN,
         });
         
-        console.log('✅ Blob uploaded:', blob.url);
+        console.log('✅ Blob uploaded successfully!');
+        console.log('📎 Blob URL:', blob.url);
+        console.log('📊 Blob size:', blob.size);
+        
         return blob.url;
     } catch (error) {
-        console.error('❌ Blob upload error:', error);
-        throw error;
+        console.error('❌ BLOB UPLOAD ERROR:');
+        console.error('   Message:', error.message);
+        console.error('   Name:', error.name);
+        console.error('   Stack:', error.stack);
+        
+        // Check if it's a specific Blob error
+        if (error.message?.includes('token')) {
+            console.error('🔑 TOKEN ERROR: Check if BLOB_READ_WRITE_TOKEN is valid');
+        }
+        if (error.message?.includes('quota')) {
+            console.error('💾 QUOTA ERROR: Blob storage quota exceeded');
+        }
+        if (error.message?.includes('network')) {
+            console.error('🌐 NETWORK ERROR: Network issue during upload');
+        }
+        
+        throw new Error(`Blob upload failed: ${error.message}`);
     }
 }
 
